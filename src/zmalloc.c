@@ -462,3 +462,201 @@ int zmalloc_test(int argc, char **argv) {
     return 0;
 }
 #endif
+
+
+/**
+ * author:lmy
+ */
+/*
+#define update_zmalloc_hbm_alloc(__n) do { \
+    size_t _n = (__n); \
+    atomicIncr(hbm_used_memory,__n); \
+} while(0)
+
+#define update_zmalloc_hbm_free(__n) do { \
+    size_t _n = (__n); \
+    atomicDecr(hbm_used_memory,__n); \
+} while(0)
+
+static size_t hbm_used_memory = 0;
+pthread_mutex_t hbm_used_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
+*/
+
+
+//static size_t hbm_memory = 0;
+static char mem[HBM_POOLS_HEAP_SIZE] = {0};
+static hbm_mem_chunk *pools_mem_head = NULL;
+
+//全局变量
+int migrate_group_var = 0;
+pthread_mutex_t migrate_group_var_mutex = PTHREAD_MUTEX_INITIALIZER;
+int migrate_data_group_var = 0;
+pthread_mutex_t migrate_data_group_var_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+int in_hbmspace(void *ptr){
+    return (void*)mem <= ptr && ptr <= (void*)(mem + HBM_POOLS_HEAP_SIZE);
+}
+
+static hbm_mem_chunk *hbm_pools_init()
+{
+    int  i;
+    int  chunk_total;
+    char *base_alloc;
+
+    // 只有在pools_mem_hear为空时才会初始化内存，否之就是直接返回pools_mem_head
+    if ( ! pools_mem_head ) {
+        chunk_total = HBM_POOLS_HEAP_SIZE / ( sizeof(hbm_mem_chunk) +
+                                                HBM_POOLS_CHUNK_SIZE );
+        base_alloc = mem + chunk_total * sizeof(hbm_mem_chunk);
+        pools_mem_head = (hbm_mem_chunk *)mem;
+
+        for ( i = 0; i < chunk_total; i++ ) {
+            pools_mem_head[i].alloc      = (void *)(base_alloc +
+                                                i * HBM_POOLS_CHUNK_SIZE);
+            pools_mem_head[i].current    = i;
+            pools_mem_head[i].alloc_size = 0;
+            pools_mem_head[i].chunk_size = HBM_POOLS_CHUNK_SIZE;
+            pools_mem_head[i].cleanup    = 0;
+            pools_mem_head[i].next       = ((i + 1) < chunk_total) ?
+                                                &pools_mem_head[i + 1] : NULL;
+        }
+    }
+    return pools_mem_head;
+}
+
+void *hbm_malloc(size_t size)
+{
+    void *ptr = NULL;
+    size_t alloc_size = 0;
+    hbm_mem_chunk *mem_head    = hbm_pools_init();
+    hbm_mem_chunk *mem_alloc   = NULL;
+    hbm_mem_chunk *mem_cleanup = NULL;
+
+    while ( mem_head ) {
+        if ( 0 == mem_head->cleanup ) {
+            mem_alloc  = mem_head;
+            alloc_size = 0;
+            ptr = mem_alloc->alloc;
+            while ( mem_alloc ) {
+                if ( 0 == alloc_size ) {
+		    // 第一块里存alloc_size，后面如果有多余的块都不会存
+                    mem_alloc->alloc_size = size;
+                }
+                mem_alloc->cleanup = 1;
+                alloc_size += mem_alloc->chunk_size;
+                if ( alloc_size > size ) {
+                    break ;
+                }
+                mem_alloc = mem_alloc->next;
+            }
+            //alloc success
+            if ( alloc_size >= size ) {
+                break ;
+            }
+            //alloc failed cleanup
+            else {
+                ptr = NULL;
+                mem_cleanup = mem_head;
+                while ( mem_cleanup && mem_cleanup != mem_alloc ) {
+                    mem_cleanup->alloc_size = 0;
+                    mem_cleanup->cleanup    = 0;
+                    mem_cleanup = mem_cleanup->next;
+                }
+            }
+        }
+
+        mem_head = mem_head->next;
+    }
+    my_log("hbm_malloc:%d\n", size);
+
+    return ptr;
+}
+
+void hbm_free(void *ptr)
+{
+    int free_size;
+    hbm_mem_chunk *mem_head = hbm_pools_init();
+
+    if ( ! ptr ) return ;
+    my_log("hbm_free:%d\n", mem_head->alloc_size);//mem_head会被修改，所以更新日志放前面好了
+
+    while ( mem_head ) {
+        if ( mem_head->alloc == ptr && 0 < mem_head->cleanup ) {
+            free_size = mem_head->alloc_size;
+            while ( 0 < free_size ) {
+                free_size -= mem_head->chunk_size;
+                mem_head->alloc_size = 0;
+                mem_head->cleanup = 0;
+                mem_head = mem_head->next;
+            }
+            return ;
+        }
+
+        mem_head = mem_head->next;
+    }
+}
+
+void *hbm_realloc(void *ptr, size_t size)
+{
+    my_log("hbm_realloc is used\n");
+    if (size == 0 && ptr != NULL){
+        hbm_free(ptr);
+        return NULL;
+    }
+    if (ptr == NULL){
+        return hbm_malloc(size);
+    }
+    hbm_free(ptr);
+    return hbm_malloc(size);
+}
+
+void hbm_pools_dump()
+{
+    hbm_mem_chunk *mem_head = hbm_pools_init();
+
+    while ( mem_head ) {
+        printf("current:%ld alloc_size:%ld cleanup:%ld \n", mem_head->current,
+                    mem_head->alloc_size, mem_head->cleanup);
+
+        mem_head = mem_head->next;
+    }
+}
+
+
+// mylog
+#include <stdarg.h>
+
+FILE* fp = NULL;
+int init_my_log(){
+    time_t t = time(NULL);
+    struct tm *tm_t;
+    char timestr[50];
+    tm_t = localtime(&t);
+    strftime(timestr,20,"%Y-%m-%d %H:%M",tm_t);
+
+    char filename[70];
+    sprintf(filename, "../data/log_%s.txt", timestr);
+    printf("mylog:%s\n", filename);
+    fp = fopen(filename, "w");
+    return fp? 1 : 0;
+}
+
+int my_log(const char* fmt, ...){
+    if(!fp) return 0;
+
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(fp, fmt, ap);
+    va_end(ap);
+
+    va_start(ap, fmt);
+    vfprintf(stdout, fmt, ap);
+    va_end(ap);
+    return 1;
+}
+
+int close_my_log(){
+    if(!fp) return 0;
+    if(fp != stdout) fclose(fp);
+    return 1;
+}
