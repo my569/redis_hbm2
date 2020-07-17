@@ -30,6 +30,50 @@
 #include "server.h"
 #include <math.h> /* isnan(), isinf() */
 
+
+/*
+ * auhor: lmy
+ * */
+int sdsMigrateIfCan(robj* o){
+    void *sh, *newsh;
+    sds s = (sds)o->ptr;
+    //char type = s[-1] & SDS_TYPE_MASK;
+
+    unsigned long counter;
+    size_t size;
+
+    // check whether data has been in hbm
+    if(in_hbmspace(o->ptr)){
+        return 0;
+    }
+
+    // check hotness
+    counter = LFUDecrAndReturn(o);
+    if(counter < 5){
+        return 0;
+    }
+
+    // check size
+    //size = sdsHdrSize(s[-1])+ sdsalloc(s) + 1;
+    size = sdsAllocSize(s);
+    if(size < 1000){
+        return 0;
+    }
+
+    // migrate
+    //sh = (char*)s-sdsHdrSize(type);
+    sh = sdsAllocPtr(s);
+    newsh = hbm_malloc(size);
+    if (newsh == NULL){
+        printf("error when hbm_malloc!");
+        return 0;
+    }
+    memcpy((char*)newsh, sh, size);
+    zfree(sh); // equals sdsfree(o->ptr);
+
+    return 1;
+}
+
 /*-----------------------------------------------------------------------------
  * String Commands
  *----------------------------------------------------------------------------*/
@@ -237,6 +281,9 @@ void setrangeCommand(client *c) {
         notifyKeyspaceEvent(NOTIFY_STRING,
             "setrange",c->argv[1],c->db->id);
         server.dirty++;
+        // mybegin
+        sdsMigrateIfCan(o->ptr);
+        // myend
     }
     addReplyLongLong(c,sdslen(o->ptr));
 }
@@ -362,6 +409,9 @@ void incrDecrCommand(client *c, long long incr) {
         new = createStringObjectFromLongLongForValue(value);
         if (o) {
             dbOverwrite(c->db,c->argv[1],new);
+            // mybegin
+            sdsMigrateIfCan(new);
+            // myend
         } else {
             dbAdd(c->db,c->argv[1],new);
         }
@@ -412,9 +462,12 @@ void incrbyfloatCommand(client *c) {
         return;
     }
     new = createStringObjectFromLongDouble(value,1);
-    if (o)
+    if (o){
         dbOverwrite(c->db,c->argv[1],new);
-    else
+        // mybegin
+        sdsMigrateIfCan(new);
+        // myend
+	}else
         dbAdd(c->db,c->argv[1],new);
     signalModifiedKey(c->db,c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_STRING,"incrbyfloat",c->argv[1],c->db->id);
@@ -456,11 +509,20 @@ void appendCommand(client *c) {
         o = dbUnshareStringValue(c->db,c->argv[1],o);
         o->ptr = sdscatlen(o->ptr,append->ptr,sdslen(append->ptr));
         totlen = sdslen(o->ptr);
+
+        // mybegin
+        if( sdsMigrateIfCan(o) ){
+	        printf("sram to hbm: key:%s, command:%s, counter:%lu\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o));
+		}else{
+	        printf("can't to hbm: key:%s, command:%s, counter:%lu\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o));
+		}
+        // myend
     }
     signalModifiedKey(c->db,c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_STRING,"append",c->argv[1],c->db->id);
     server.dirty++;
     addReplyLongLong(c,totlen);
+    
 }
 
 void strlenCommand(client *c) {
