@@ -148,7 +148,27 @@ void *zrealloc(void *ptr, size_t size) {
     size_t oldsize;
     void *newptr;
 
+    // mybegin
+    //if (canMigrate() && isMigrateData()){
+    //    return hbm_realloc(ptr,size);
+    //}
+    // myend
+
     if (ptr == NULL) return zmalloc(size);
+
+    // mybegin
+    if (in_hbmspace(ptr)){
+        hbm_free(ptr);
+        ptr = hbm_malloc(size);
+	    if(ptr){
+            return ptr;
+        }else{
+            return NULL;
+        }
+    }
+    //printf("zrealloc: %p not in hbm\n", ptr);
+    // myend
+
 #ifdef HAVE_MALLOC_SIZE
     oldsize = zmalloc_size(ptr);
     newptr = realloc(ptr,size);
@@ -192,8 +212,14 @@ void zfree(void *ptr) {
     void *realptr;
     size_t oldsize;
 #endif
-
     if (ptr == NULL) return;
+
+    // mybegin
+    if (in_hbmspace(ptr)){
+        hbm_free(ptr);
+        return;
+    }
+    // myend
 #ifdef HAVE_MALLOC_SIZE
     update_zmalloc_stat_free(zmalloc_size(ptr));
     free(ptr);
@@ -467,7 +493,7 @@ int zmalloc_test(int argc, char **argv) {
 /**
  * author:lmy
  */
-/*
+
 #define update_zmalloc_hbm_alloc(__n) do { \
     size_t _n = (__n); \
     atomicIncr(hbm_used_memory,__n); \
@@ -478,10 +504,8 @@ int zmalloc_test(int argc, char **argv) {
     atomicDecr(hbm_used_memory,__n); \
 } while(0)
 
-static size_t hbm_used_memory = 0;
+size_t hbm_used_memory = 0;
 pthread_mutex_t hbm_used_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
-*/
-
 
 //static size_t hbm_memory = 0;
 static char mem[HBM_POOLS_HEAP_SIZE] = {0};
@@ -492,8 +516,15 @@ int migrate_group_var = 0;
 pthread_mutex_t migrate_group_var_mutex = PTHREAD_MUTEX_INITIALIZER;
 int migrate_data_group_var = 0;
 pthread_mutex_t migrate_data_group_var_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int first = 1;
 
 int in_hbmspace(void *ptr){
+    //return (size_t)mem <= (size_t)ptr && (size_t)ptr <= (size_t)(mem + HBM_POOLS_HEAP_SIZE);
+    if(first){
+        printf("hbmspace:%p-%p,ptr:%p\n", (void*)mem, (void*)(mem+HBM_POOLS_HEAP_SIZE), ptr);
+        first = 0;
+    }
+    
     return (void*)mem <= ptr && ptr <= (void*)(mem + HBM_POOLS_HEAP_SIZE);
 }
 
@@ -526,6 +557,12 @@ static hbm_mem_chunk *hbm_pools_init()
 
 void *hbm_malloc(size_t size)
 {
+    if (hbm_used_memory >= HBM_POOLS_HEAP_SIZE)
+    {
+        printf("hbm overflow! need:%zu, free:%zu-%zu=%zu\n", size, (size_t)HBM_POOLS_HEAP_SIZE, hbm_used_memory, HBM_POOLS_HEAP_SIZE-hbm_used_memory);
+	    return NULL;
+    }
+
     void *ptr = NULL;
     size_t alloc_size = 0;
     hbm_mem_chunk *mem_head    = hbm_pools_init();
@@ -568,7 +605,13 @@ void *hbm_malloc(size_t size)
         mem_head = mem_head->next;
     }
     my_log("hbm_malloc:%d\n", size);
-
+    if(ptr != NULL){
+        update_zmalloc_hbm_alloc(alloc_size);
+    }else{
+        printf("hbmmalloc failed!");
+    }
+    
+    
     return ptr;
 }
 
@@ -578,7 +621,6 @@ void hbm_free(void *ptr)
     hbm_mem_chunk *mem_head = hbm_pools_init();
 
     if ( ! ptr ) return ;
-    my_log("hbm_free:%d\n", mem_head->alloc_size);//mem_head会被修改，所以更新日志放前面好了
 
     while ( mem_head ) {
         if ( mem_head->alloc == ptr && 0 < mem_head->cleanup ) {
@@ -589,9 +631,11 @@ void hbm_free(void *ptr)
                 mem_head->cleanup = 0;
                 mem_head = mem_head->next;
             }
+            //ptr = NULL;
+            update_zmalloc_hbm_free(free_size);
+            //my_log("hbm_free:%d\n", free_size);
             return ;
         }
-
         mem_head = mem_head->next;
     }
 }

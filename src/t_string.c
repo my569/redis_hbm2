@@ -35,17 +35,13 @@
  * auhor: lmy
  * */
 int sdsMigrateIfCan(robj* o){
+    //return 0;
     void *sh, *newsh;
     sds s = (sds)o->ptr;
     //char type = s[-1] & SDS_TYPE_MASK;
 
     unsigned long counter;
     size_t size;
-
-    // check whether data has been in hbm
-    if(in_hbmspace(o->ptr)){
-        return 0;
-    }
 
     // check hotness
     counter = LFUDecrAndReturn(o);
@@ -56,7 +52,7 @@ int sdsMigrateIfCan(robj* o){
     // check size
     //size = sdsHdrSize(s[-1])+ sdsalloc(s) + 1;
     size = sdsAllocSize(s);
-    if(size < 1000){
+    if(size < 100){
         return 0;
     }
 
@@ -65,11 +61,12 @@ int sdsMigrateIfCan(robj* o){
     sh = sdsAllocPtr(s);
     newsh = hbm_malloc(size);
     if (newsh == NULL){
-        printf("error when hbm_malloc!");
+        printf("error when hbm_malloc! still in sram\n");
         return 0;
     }
     memcpy((char*)newsh, sh, size);
     zfree(sh); // equals sdsfree(o->ptr);
+    o->ptr = newsh;
 
     return 1;
 }
@@ -282,7 +279,7 @@ void setrangeCommand(client *c) {
             "setrange",c->argv[1],c->db->id);
         server.dirty++;
         // mybegin
-        sdsMigrateIfCan(o->ptr);
+        //sdsMigrateIfCan(o->ptr);
         // myend
     }
     addReplyLongLong(c,sdslen(o->ptr));
@@ -410,7 +407,7 @@ void incrDecrCommand(client *c, long long incr) {
         if (o) {
             dbOverwrite(c->db,c->argv[1],new);
             // mybegin
-            sdsMigrateIfCan(new);
+            // sdsMigrateIfCan(new);
             // myend
         } else {
             dbAdd(c->db,c->argv[1],new);
@@ -465,7 +462,7 @@ void incrbyfloatCommand(client *c) {
     if (o){
         dbOverwrite(c->db,c->argv[1],new);
         // mybegin
-        sdsMigrateIfCan(new);
+        // sdsMigrateIfCan(new);
         // myend
 	}else
         dbAdd(c->db,c->argv[1],new);
@@ -507,15 +504,24 @@ void appendCommand(client *c) {
 
         /* Append the value */
         o = dbUnshareStringValue(c->db,c->argv[1],o);
+        // mybegin
+        printf("dump: key:%s, value:%p, command:%s, counter:%lu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, c->argv[1]->ptr, "append", LFUDecrAndReturn(o), sdsAllocSize((sds)o->ptr), o->ptr);
+        // myend
         o->ptr = sdscatlen(o->ptr,append->ptr,sdslen(append->ptr));
         totlen = sdslen(o->ptr);
 
         // mybegin
-        if( sdsMigrateIfCan(o) ){
-	        printf("sram to hbm: key:%s, command:%s, counter:%lu\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o));
-		}else{
-	        printf("can't to hbm: key:%s, command:%s, counter:%lu\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o));
-		}
+	    printf("hbm_used:%zu\n", hbm_used_memory);
+	    //hbm_pools_dump();
+
+        // check whether data has been in hbm
+        if(in_hbmspace(o->ptr)){
+            printf("already in hbm: key:%s, command:%s, counter:%lu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), sdsAllocSize((sds)o->ptr), o->ptr);
+        }else if( sdsMigrateIfCan(o) ){
+            printf("sram to hbm: key:%s, command:%s, counter:%lu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), sdsAllocSize((sds)o->ptr), o->ptr);
+        }else{
+            printf("can't to hbm: key:%s, command:%s, counter:%lu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o),sdsAllocSize((sds)o->ptr), o->ptr);
+        }
         // myend
     }
     signalModifiedKey(c->db,c->argv[1]);

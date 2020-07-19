@@ -122,8 +122,11 @@ int zmalloc_test(int argc, char **argv);
 #define __HBM_H
 
 #define HBM_POOLS_CHUNK_SIZE (256)
-#define HBM_POOLS_HEAP_SIZE  (256*1024*1024) //256M
+//#define HBM_POOLS_HEAP_SIZE  (256*1024*1024) //256M
+#define HBM_POOLS_HEAP_SIZE  (10*1024*1024) //10M
 #define HBM_HOT_SIZE 100
+
+extern size_t hbm_used_memory;
 
 // migrate标志
 #define set_migrate() do { \
