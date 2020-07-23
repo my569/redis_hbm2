@@ -571,17 +571,17 @@ void *hbm_malloc(size_t size)
 
     while ( mem_head ) {
         if ( 0 == mem_head->cleanup ) {
-            mem_alloc  = mem_head;
             alloc_size = 0;
+            mem_alloc  = mem_head;
             ptr = mem_alloc->alloc;
+            mem_alloc->alloc_size = size;// 第一块里存size，后面如果有多余的块都不会存
             while ( mem_alloc ) {
-                if ( 0 == alloc_size ) {
-		    // 第一块里存alloc_size，后面如果有多余的块都不会存
-                    mem_alloc->alloc_size = size;
+                if (mem_alloc->cleanup){
+                    break;
                 }
                 mem_alloc->cleanup = 1;
                 alloc_size += mem_alloc->chunk_size;
-                if ( alloc_size > size ) {
+                if ( alloc_size >= size ) {
                     break ;
                 }
                 mem_alloc = mem_alloc->next;
@@ -617,16 +617,17 @@ void *hbm_malloc(size_t size)
 
 void hbm_free(void *ptr)
 {
-    int free_size;
+    size_t free_size = 0;
+    size_t alloc_size;
     hbm_mem_chunk *mem_head = hbm_pools_init();
 
     if ( ! ptr ) return ;
 
     while ( mem_head ) {
         if ( mem_head->alloc == ptr && 0 < mem_head->cleanup ) {
-            free_size = mem_head->alloc_size;
-            while ( 0 < free_size ) {
-                free_size -= mem_head->chunk_size;
+            alloc_size = mem_head->alloc_size;
+            while ( free_size <=  alloc_size) {
+                free_size += mem_head->chunk_size;
                 mem_head->alloc_size = 0;
                 mem_head->cleanup = 0;
                 mem_head = mem_head->next;

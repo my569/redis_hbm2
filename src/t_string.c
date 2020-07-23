@@ -36,12 +36,13 @@
  * */
 int sdsMigrateIfCan(robj* o){
     //return 0;
-    void *sh, *newsh;
+    void *sh , *newsh;
     sds s = (sds)o->ptr;
+    size_t offset;
     //char type = s[-1] & SDS_TYPE_MASK;
 
     unsigned long counter;
-    size_t size;
+    size_t size = 0;
 
     // check hotness
     counter = LFUDecrAndReturn(o);
@@ -59,6 +60,7 @@ int sdsMigrateIfCan(robj* o){
     // migrate
     //sh = (char*)s-sdsHdrSize(type);
     sh = sdsAllocPtr(s);
+    offset = s-(char*)sh;
     newsh = hbm_malloc(size);
     if (newsh == NULL){
         printf("error when hbm_malloc! still in sram\n");
@@ -66,7 +68,8 @@ int sdsMigrateIfCan(robj* o){
     }
     memcpy((char*)newsh, sh, size);
     zfree(sh); // equals sdsfree(o->ptr);
-    o->ptr = newsh;
+    o->ptr = (char*)newsh + offset;
+
 
     return 1;
 }
@@ -502,26 +505,46 @@ void appendCommand(client *c) {
         if (checkStringLength(c,totlen) != C_OK)
             return;
 
+
         /* Append the value */
         o = dbUnshareStringValue(c->db,c->argv[1],o);
-        // mybegin
-        printf("dump: key:%s, value:%p, command:%s, counter:%lu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, c->argv[1]->ptr, "append", LFUDecrAndReturn(o), sdsAllocSize((sds)o->ptr), o->ptr);
-        // myend
+
         o->ptr = sdscatlen(o->ptr,append->ptr,sdslen(append->ptr));
         totlen = sdslen(o->ptr);
 
+        printf("hbm_used:%zu\n", hbm_used_memory);
+        if(in_hbmspace(o->ptr)){// 如果空间足够的话，扩容时不用重新分配空间，则原先在hbm中的数据依然会在hbm中，但是如果重新分配空间了，就会
+            printf("== already in hbm: key:%s, command:%s, counter:%lu, len=%zu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), totlen, sdsAllocSize((sds)o->ptr), o->ptr);
+        }else if( sdsMigrateIfCan(o) ){
+            printf(">> sram to hbm: key:%s, command:%s, counter:%lu, len=%zu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), totlen, sdsAllocSize((sds)o->ptr), o->ptr);
+        }else{
+            printf("** can't to hbm: key:%s, command:%s, counter:%lu, len=%zu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), totlen, sdsAllocSize((sds)o->ptr), o->ptr);
+        }
+
+        /*
+        只要执行了append命令，dbUnshareStringValue函数就会修改字符串的encodeing为raw
+
+        
+        if(o->encoding == OBJ_ENCODING_RAW){
+            size = sdsAllocSize((sds)o->ptr);
+        }else if(o->encoding == OBJ_ENCODING_EMBSTR){
+            size = sizeof(robj) + sdsAllocSize((sds)o->ptr);
+        }
+        
+        if(in_hbmspace(o->ptr)){// 如果空间足够的话，扩容时不用重新分配空间，则原先在hbm中的数据依然会在hbm中，但是如果重新分配空间了，就会
+            printf("== already in hbm: key:%s, command:%s, counter:%lu, len=%zu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), totlen, size, o->ptr);
+        }else if( sdsMigrateIfCan(o) ){
+            printf(">> sram to hbm: key:%s, command:%s, counter:%lu, len=%zu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), totlen, size, o->ptr);
+        }else{
+            printf("** can't to hbm: key:%s, command:%s, counter:%lu, len=%zu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), totlen, size, o->ptr);
+        }
+        */
         // mybegin
-	    printf("hbm_used:%zu\n", hbm_used_memory);
+        
 	    //hbm_pools_dump();
 
         // check whether data has been in hbm
-        if(in_hbmspace(o->ptr)){
-            printf("already in hbm: key:%s, command:%s, counter:%lu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), sdsAllocSize((sds)o->ptr), o->ptr);
-        }else if( sdsMigrateIfCan(o) ){
-            printf("sram to hbm: key:%s, command:%s, counter:%lu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), sdsAllocSize((sds)o->ptr), o->ptr);
-        }else{
-            printf("can't to hbm: key:%s, command:%s, counter:%lu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o),sdsAllocSize((sds)o->ptr), o->ptr);
-        }
+        
         // myend
     }
     signalModifiedKey(c->db,c->argv[1]);
