@@ -228,7 +228,14 @@ sds sdsMakeRoomFor(sds s, size_t addlen) {
 
     hdrlen = sdsHdrSize(type);
     if (oldtype==type) {
-        newsh = s_realloc(sh, hdrlen+newlen+1); // 原先在hbm中的realloc后还在hbm中
+        // mybegin
+        if(in_hbmspace(s)){
+            newsh = hbm_realloc(sh, hdrlen+newlen+1);
+        }else{
+            newsh = s_realloc(sh, hdrlen+newlen+1);
+        }
+        // myend
+        
         if (newsh == NULL) return NULL;
         s = (char*)newsh+hdrlen;
     } else {
@@ -239,7 +246,6 @@ sds sdsMakeRoomFor(sds s, size_t addlen) {
         }else{
             newsh = s_malloc(hdrlen+newlen+1);
         }
-        
         if (newsh == NULL) return NULL;
         memcpy((char*)newsh+hdrlen, s, len+1);
         s_free(sh);
