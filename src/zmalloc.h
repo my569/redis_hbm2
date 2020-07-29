@@ -117,6 +117,7 @@ int zmalloc_test(int argc, char **argv);
 #include <stdlib.h>
 #include <pthread.h>
 #include "atomicvar.h"
+#include "dlmalloc.h"
 
 #ifndef __HBM_H
 #define __HBM_H

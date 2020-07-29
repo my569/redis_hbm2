@@ -157,15 +157,9 @@ void *zrealloc(void *ptr, size_t size) {
     if (ptr == NULL) return zmalloc(size);
 
     // mybegin
-    if (in_hbmspace(ptr)){
-        hbm_free(ptr);
-        ptr = hbm_malloc(size);
-	    if(ptr){
-            return ptr;
-        }else{
-            return NULL;
-        }
-    }
+    /*if (in_hbmspace(ptr)){
+        return hbm_realloc(ptr, size);
+    }*/
     //printf("zrealloc: %p not in hbm\n", ptr);
     // myend
 
@@ -507,164 +501,70 @@ int zmalloc_test(int argc, char **argv) {
 size_t hbm_used_memory = 0;
 pthread_mutex_t hbm_used_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-//static size_t hbm_memory = 0;
-static char mem[HBM_POOLS_HEAP_SIZE] = {0};
-static hbm_mem_chunk *pools_mem_head = NULL;
 
 //全局变量
 int migrate_group_var = 0;
 pthread_mutex_t migrate_group_var_mutex = PTHREAD_MUTEX_INITIALIZER;
 int migrate_data_group_var = 0;
 pthread_mutex_t migrate_data_group_var_mutex = PTHREAD_MUTEX_INITIALIZER;
-static int first = 1;
 
-int in_hbmspace(void *ptr){
-    //return (size_t)mem <= (size_t)ptr && (size_t)ptr <= (size_t)(mem + HBM_POOLS_HEAP_SIZE);
-    if(first){
-        printf("hbmspace:%p-%p,ptr:%p\n", (void*)mem, (void*)(mem+HBM_POOLS_HEAP_SIZE), ptr);
-        first = 0;
+// dlmalloc
+static mspace ms = NULL;
+void my_init(){
+    ms = create_mspace(64*1024*1024,0);//64M
+    //printf("mlmalloc initlized success\n");
+}
+void* my_malloc(size_t size){
+    if(!ms){
+        my_init();
     }
-    
-    return (void*)mem <= ptr && ptr <= (void*)(mem + HBM_POOLS_HEAP_SIZE);
+    return mspace_malloc(ms, size);
+}
+void my_free(void *ptr){
+    mspace_free(ms, ptr);
+}
+void* my_realloc(void *ptr, size_t size){
+    if(!ms){
+        my_init();
+    }
+    return mspace_realloc(ms, ptr, size);
+}
+int my_inspace(void* ptr){
+    if(!ms){
+        my_init();
+    }
+    return mspace_is_in(ms, ptr);
+}
+void my_info(){
+    if(!ms){
+        my_init();
+    }
+    mspace_malloc_stats(ms);
 }
 
-static hbm_mem_chunk *hbm_pools_init()
-{
-    int  i;
-    int  chunk_total;
-    char *base_alloc;
 
-    // 只有在pools_mem_hear为空时才会初始化内存，否之就是直接返回pools_mem_head
-    if ( ! pools_mem_head ) {
-        chunk_total = HBM_POOLS_HEAP_SIZE / ( sizeof(hbm_mem_chunk) +
-                                                HBM_POOLS_CHUNK_SIZE );
-        base_alloc = mem + chunk_total * sizeof(hbm_mem_chunk);
-        pools_mem_head = (hbm_mem_chunk *)mem;
-
-        for ( i = 0; i < chunk_total; i++ ) {
-            pools_mem_head[i].alloc      = (void *)(base_alloc +
-                                                i * HBM_POOLS_CHUNK_SIZE);
-            pools_mem_head[i].current    = i;
-            pools_mem_head[i].alloc_size = 0;
-            pools_mem_head[i].chunk_size = HBM_POOLS_CHUNK_SIZE;
-            pools_mem_head[i].cleanup    = 0;
-            pools_mem_head[i].next       = ((i + 1) < chunk_total) ?
-                                                &pools_mem_head[i + 1] : NULL;
-        }
-    }
-    return pools_mem_head;
+int in_hbmspace(void *ptr){
+    return my_inspace(ptr);
 }
 
 void *hbm_malloc(size_t size)
 {
-    if (hbm_used_memory >= HBM_POOLS_HEAP_SIZE)
-    {
-        printf("hbm overflow! need:%zu, free:%zu-%zu=%zu\n", size, (size_t)HBM_POOLS_HEAP_SIZE, hbm_used_memory, HBM_POOLS_HEAP_SIZE-hbm_used_memory);
-	    return NULL;
-    }
-
-    void *ptr = NULL;
-    size_t alloc_size = 0;
-    hbm_mem_chunk *mem_head    = hbm_pools_init();
-    hbm_mem_chunk *mem_alloc   = NULL;
-    hbm_mem_chunk *mem_cleanup = NULL;
-
-    while ( mem_head ) {
-        if ( 0 == mem_head->cleanup ) {
-            alloc_size = 0;
-            mem_alloc  = mem_head;
-            ptr = mem_alloc->alloc;
-            mem_alloc->alloc_size = size;// 第一块里存size，后面如果有多余的块都不会存
-            while ( mem_alloc ) {
-                if (mem_alloc->cleanup){
-                    break;
-                }
-                mem_alloc->cleanup = 1;
-                alloc_size += mem_alloc->chunk_size;
-                if ( alloc_size >= size ) {
-                    break ;
-                }
-                mem_alloc = mem_alloc->next;
-            }
-            //alloc success
-            if ( alloc_size >= size ) {
-                break ;
-            }
-            //alloc failed cleanup
-            else {
-                ptr = NULL;
-                mem_cleanup = mem_head;
-                while ( mem_cleanup && mem_cleanup != mem_alloc ) {
-                    mem_cleanup->alloc_size = 0;
-                    mem_cleanup->cleanup    = 0;
-                    mem_cleanup = mem_cleanup->next;
-                }
-            }
-        }
-
-        mem_head = mem_head->next;
-    }
-    my_log("hbm_malloc:%d\n", size);
-    if(ptr != NULL){
-        update_zmalloc_hbm_alloc(alloc_size);
-    }else{
-        printf("hbmmalloc failed!");
-    }
-    
-    
-    return ptr;
+    return my_malloc(size);
 }
 
 void hbm_free(void *ptr)
 {
-    size_t free_size = 0;
-    size_t alloc_size;
-    hbm_mem_chunk *mem_head = hbm_pools_init();
-
-    if ( ! ptr ) return ;
-
-    while ( mem_head ) {
-        if ( mem_head->alloc == ptr && 0 < mem_head->cleanup ) {
-            alloc_size = mem_head->alloc_size;
-            while ( free_size <=  alloc_size) {
-                free_size += mem_head->chunk_size;
-                mem_head->alloc_size = 0;
-                mem_head->cleanup = 0;
-                mem_head = mem_head->next;
-            }
-            //ptr = NULL;
-            update_zmalloc_hbm_free(free_size);
-            //my_log("hbm_free:%d\n", free_size);
-            return ;
-        }
-        mem_head = mem_head->next;
-    }
+    my_free(ptr);
 }
 
 void *hbm_realloc(void *ptr, size_t size)
 {
-    my_log("hbm_realloc is used\n");
-    if (size == 0 && ptr != NULL){
-        hbm_free(ptr);
-        return NULL;
-    }
-    if (ptr == NULL){
-        return hbm_malloc(size);
-    }
-    hbm_free(ptr);
-    return hbm_malloc(size);
+    return my_realloc(ptr, size);
 }
 
 void hbm_pools_dump()
 {
-    hbm_mem_chunk *mem_head = hbm_pools_init();
-
-    while ( mem_head ) {
-        printf("current:%ld alloc_size:%ld cleanup:%ld \n", mem_head->current,
-                    mem_head->alloc_size, mem_head->cleanup);
-
-        mem_head = mem_head->next;
-    }
+    my_info();
 }
 
 
