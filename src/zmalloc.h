@@ -110,23 +110,21 @@ int zmalloc_test(int argc, char **argv);
 #endif /* __ZMALLOC_H */
 
 /**
- * author:nejidev
- * date:2019-12-05
+ * author:lmy
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include "atomicvar.h"
 #include "dlmalloc.h"
+#include "insider.h"
 
 #ifndef __HBM_H
 #define __HBM_H
 
-#define HBM_POOLS_CHUNK_SIZE (256)
-//#define HBM_POOLS_HEAP_SIZE  (256*1024*1024) //256M
-#define HBM_POOLS_HEAP_SIZE  (10*1024*1024) //10M
-#define HBM_HOT_SIZE 100
+#define MY_DEBUG 1
 
+#define HBM_HOT_SIZE 100
 extern size_t hbm_used_memory;
 
 // migrate标志
@@ -160,20 +158,12 @@ static inline int isMigrateData(){
     return temp == 1;
 }
 
-typedef struct hbm_mem_chunk {
-	void  *alloc;
-	size_t alloc_size;
-	size_t chunk_size;
-	size_t current;
-	size_t cleanup; //0 cleanup 1 alloc
-	struct hbm_mem_chunk *next;
-} hbm_mem_chunk;
-
 void *hbm_malloc(size_t size);
 void hbm_free(void *ptr);
 void *hbm_realloc(void* ptr, size_t size);
 void hbm_pools_dump();
 int in_hbmspace(void *ptr);
+void* getRealAddr(void* virt_addr);
 
 //inline static int canMigrate();
 //inline static int isMigrateData();
@@ -183,10 +173,19 @@ int in_hbmspace(void *ptr);
 #ifndef __LOG_H
 #define __LOG_H
 
+#define TRACE_START 1
+#define TRACE_REAL 1
+
+typedef enum{
+    TRACE_READ = 0,
+    TRACE_WRITE = 1
+}TraceType;
+
 //mylog
 int init_my_log();
 int my_log(const char* fmt, ...);
 int close_my_log();
+void log_my_trace(void* ptr, TraceType type);
 
 #endif //__LOG_H
 

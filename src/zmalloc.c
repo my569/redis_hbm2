@@ -97,6 +97,7 @@ static void (*zmalloc_oom_handler)(size_t) = zmalloc_default_oom;
 
 void *zmalloc(size_t size) {
     void *ptr = malloc(size+PREFIX_SIZE);
+    //getRealAddr(ptr);
 
     if (!ptr) zmalloc_oom_handler(size);
 #ifdef HAVE_MALLOC_SIZE
@@ -510,46 +511,48 @@ pthread_mutex_t migrate_data_group_var_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // dlmalloc
 static mspace ms = NULL;
-void my_init(){
-    ms = create_mspace(64*1024*1024,0);//64M
+void my_hbm_init(size_t space_size){
+    ms = create_mspace(space_size,0);
+    //ms = create_mspace(64*1024*1024,0);//64M
     //printf("mlmalloc initlized success\n");
 }
 void* my_malloc(size_t size){
-    if(!ms){
-        my_init();
-    }
+    if(!ms) return NULL;
     return mspace_malloc(ms, size);
 }
 void my_free(void *ptr){
+    if(!ms) return ;
     mspace_free(ms, ptr);
 }
 void* my_realloc(void *ptr, size_t size){
-    if(!ms){
-        my_init();
-    }
+    if(!ms) return NULL;
     return mspace_realloc(ms, ptr, size);
 }
 int my_inspace(void* ptr){
-    if(!ms){
-        my_init();
-    }
+    if(!ms) return 0;
     return mspace_is_in(ms, ptr);
 }
 void my_info(){
-    if(!ms){
-        my_init();
-    }
+    if(!ms) return ;
     mspace_malloc_stats(ms);
 }
 
-
+// hbm
 int in_hbmspace(void *ptr){
     return my_inspace(ptr);
 }
 
 void *hbm_malloc(size_t size)
 {
-    return my_malloc(size);
+    void *ptr = my_malloc(size);
+
+    if(ptr==NULL){
+#if MY_DEBUG
+        printf("hbm malloc failed, will use dram malloc\n");
+#endif
+        ptr = zmalloc(size);
+    }
+    return ptr;
 }
 
 void hbm_free(void *ptr)
@@ -559,7 +562,17 @@ void hbm_free(void *ptr)
 
 void *hbm_realloc(void *ptr, size_t size)
 {
-    return my_realloc(ptr, size);
+    void *vptr = my_realloc(ptr, size);
+    if(vptr==NULL){
+#if MY_DEBUG
+        printf("hbm malloc failed, will use dram malloc\n");
+#endif
+        size_t oldsize = sizeof(ptr);
+        vptr = zmalloc(size);
+        memcpy((char*)vptr, ptr, oldsize);
+        my_free(ptr);
+    }
+    return vptr;
 }
 
 void hbm_pools_dump()
@@ -568,10 +581,51 @@ void hbm_pools_dump()
 }
 
 
+void* getRealAddr(void* virt_ptr){
+    pid_t pid = getpid();
+    void* phy_ptr;
+
+    unsigned long virt_addr = (unsigned long)virt_ptr;
+    uint64_t phy_addr, page_frame_num;
+    
+    int flag = read_pagemap(pid, virt_addr, &phy_addr, &page_frame_num);
+    phy_ptr = (void*)phy_addr;
+
+#if MY_DEBUG
+    if(flag == -1){
+        printf("read real addr failed\n");
+    }else if(flag == 1){
+        printf("Page not present\n");
+    }else if(flag == 2){
+        printf("Page swapped\n");
+    }else if(flag == 0){
+        printf("ptr virtual: %p, real: %p, frame: %lu\n", virt_ptr, phy_ptr, page_frame_num);
+        printf("addr virtual: 0x%lx, real: 0x%lx, frame: %lu\n", virt_addr, phy_addr, page_frame_num);
+    }
+#endif
+
+    return phy_ptr;
+}
+
+char* get_hbm_space_info(char* buf){//buf 可以设置50
+    if(!ms) return "";
+    void *start_ptr, *end_ptr;
+    
+    get_mspace_info(ms, &start_ptr, &end_ptr);
+#if TRACE_REAL
+    sprintf(buf, "hbmspcae: %p-%p\n", getRealAddr(start_ptr), getRealAddr(end_ptr));
+#else
+    sprintf(buf, "hbmspcae: %p-%p\n", start_ptr, end_ptr);
+#endif
+    return buf;
+}
+
+
+
 // mylog
 #include <stdarg.h>
 
-FILE* fp = NULL;
+static FILE* fp = NULL;
 int init_my_log(){
     time_t t = time(NULL);
     struct tm *tm_t;
@@ -579,10 +633,18 @@ int init_my_log(){
     tm_t = localtime(&t);
     strftime(timestr,20,"%Y-%m-%d %H:%M",tm_t);
 
-    char filename[70];
-    sprintf(filename, "../data/log_%s.txt", timestr);
-    printf("mylog:%s\n", filename);
+    char filename[100];
+    //sprintf(filename, "../data/log_%s.txt", timestr);
+    sprintf(filename, "/home/lmy/myfile/trace_file/log_%s.txt", timestr);
     fp = fopen(filename, "w");
+    if(!fp){
+        printf("log file create fail: %s\n", filename);
+        printf("open fail errno = %d reason = %s \n", errno, strerror(errno));
+        return 0;
+    }else{
+        printf("create mylog file: %s\n", filename);
+        return 1;
+    }
     return fp? 1 : 0;
 }
 
@@ -604,4 +666,22 @@ int close_my_log(){
     if(!fp) return 0;
     if(fp != stdout) fclose(fp);
     return 1;
+}
+
+void trace_init(){
+    if(!fp) return ;
+    char buf[50];
+    my_log(get_hbm_space_info(buf));
+}
+
+void log_my_trace(void* ptr, TraceType type)
+{
+    if(!fp) return ;
+#if TRACE_REAL
+    fprintf(stdout, "%p %s %d\n", getRealAddr(ptr), type==TRACE_READ? "R":"w", in_hbmspace(ptr));
+    fprintf(fp, "%p %s %d\n", getRealAddr(ptr), type==TRACE_READ? "R":"w", in_hbmspace(ptr));
+#else
+    fprintf(stdout, "%p %s %d\n", ptr, type==TRACE_READ? "R":"w", in_hbmspace(ptr));
+    fprintf(fp, "%p %s %d\n", ptr, type==TRACE_READ? "R":"w", in_hbmspace(ptr));
+#endif
 }

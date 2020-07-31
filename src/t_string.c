@@ -511,8 +511,10 @@ void appendCommand(client *c) {
 
         o->ptr = sdscatlen(o->ptr,append->ptr,sdslen(append->ptr));
         totlen = sdslen(o->ptr);
-
+        log_my_trace(o->ptr, TRACE_READ);
+#if MY_DEBUG
         hbm_pools_dump();
+#endif
         if(in_hbmspace(o->ptr)){// 如果空间足够的话，扩容时不用重新分配空间，则原先在hbm中的数据依然会在hbm中，但是如果重新分配空间了，就会
             printf("== already in hbm: key:%s, command:%s, counter:%lu, len=%zu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), totlen, sdsAllocSize((sds)o->ptr), o->ptr);
         }else if( sdsMigrateIfCan(o) ){
