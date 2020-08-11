@@ -5407,7 +5407,7 @@ void get_mspace_info(mspace msp, void **start_ptr, void **end_ptr){
     }
     POSTACTION(m);
   }
-  return 0;
+  return ;
 }
 
 int inmspace(mstate m, void *ptr) {

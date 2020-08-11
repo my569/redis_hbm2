@@ -30,6 +30,9 @@
 #include "server.h"
 #include <math.h> /* isnan(), isinf() */
 
+// mybegin
+#include "zsim-ramulator/misc/hooks/zsim_hooks.h"
+// myend
 
 /*
  * auhor: lmy
@@ -138,6 +141,7 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
 
 /* SET key value [NX] [XX] [EX <seconds>] [PX <milliseconds>] */
 void setCommand(client *c) {
+    zsim_PIM_function_begin();
     int j;
     robj *expire = NULL;
     int unit = UNIT_SECONDS;
@@ -181,6 +185,7 @@ void setCommand(client *c) {
 
     c->argv[2] = tryObjectEncoding(c->argv[2]);
     setGenericCommand(c,flags,c->argv[1],c->argv[2],expire,unit,NULL,NULL);
+    zsim_PIM_function_end();
 }
 
 void setnxCommand(client *c) {
@@ -484,6 +489,8 @@ void incrbyfloatCommand(client *c) {
 }
 
 void appendCommand(client *c) {
+    zsim_PIM_function_begin();
+
     size_t totlen;
     robj *o, *append;
 
@@ -511,7 +518,7 @@ void appendCommand(client *c) {
 
         o->ptr = sdscatlen(o->ptr,append->ptr,sdslen(append->ptr));
         totlen = sdslen(o->ptr);
-        log_my_trace(o->ptr, TRACE_READ);
+        
 #if MY_DEBUG
         hbm_pools_dump();
 #endif
@@ -522,7 +529,7 @@ void appendCommand(client *c) {
         }else{
             printf("** can't to hbm: key:%s, command:%s, counter:%lu, len=%zu, size=%zu, ptr=%p\n", (char*)c->argv[1]->ptr, "append", LFUDecrAndReturn(o), totlen, sdsAllocSize((sds)o->ptr), o->ptr);
         }
-
+        log_my_trace(o->ptr, TRACE_READ);
         /*
         只要执行了append命令，dbUnshareStringValue函数就会修改字符串的encodeing为raw
 
@@ -554,6 +561,7 @@ void appendCommand(client *c) {
     server.dirty++;
     addReplyLongLong(c,totlen);
     
+    zsim_PIM_function_end();
 }
 
 void strlenCommand(client *c) {
