@@ -5174,8 +5174,9 @@ void* mspace_malloc(mspace msp, size_t bytes) {
     }
 
     // mybegin
-    //printf("overflow!\n");
-    //goto postaction;
+    printf("hbm overflow!\n");
+    mem = NULL; //重置mem
+    goto postaction;
     // myend
     mem = sys_alloc(ms, nb);
 
@@ -5390,7 +5391,26 @@ void mspace_malloc_stats(mspace msp) {
 }
 
 // mybegin
-int inmspace(mstate m, void* ptr) {
+void get_mspace_info(mspace msp, void **start_ptr, void **end_ptr){
+  mstate m = (mstate)msp;
+
+  ensure_initialization();
+  if (!PREACTION(m)) {
+    check_malloc_state(m);
+    if (is_initialized(m)) {
+      msegmentptr s = &m->seg;
+      while (s != 0) {
+        *start_ptr = (void*)s->base;
+        *end_ptr = (void*)(s->base + s->size);
+        s = s->next;
+      }
+    }
+    POSTACTION(m);
+  }
+  return ;
+}
+
+int inmspace(mstate m, void *ptr) {
   ensure_initialization();
   if (!PREACTION(m)) {
     check_malloc_state(m);

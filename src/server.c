@@ -56,6 +56,10 @@
 #include <locale.h>
 #include <sys/socket.h>
 
+//mybegin
+#include "zsim-ramulator/misc/hooks/zsim_hooks.h"
+//end
+
 /* Our shared "common" objects */
 
 struct sharedObjectsStruct shared;
@@ -4041,6 +4045,14 @@ int main(int argc, char **argv) {
     struct timeval tv;
     int j;
 
+    //mybegin
+    zsim_roi_begin();
+
+    init_my_log();
+    my_hbm_init(8*1024*1024);//8M 用于测试
+    trace_init();
+    //myend
+
 #ifdef REDIS_TEST
     if (argc == 3 && !strcasecmp(argv[1], "test")) {
         if (!strcasecmp(argv[2], "ziplist")) {
@@ -4194,6 +4206,9 @@ int main(int argc, char **argv) {
 
     initServer();
     if (background || server.pidfile) createPidFile();
+    // mybegin
+    serverLog(LL_NOTICE, "my debug : pid=%d\n", server.pid);
+    // myend
     redisSetProcTitle(argv[0]);
     redisAsciiArt();
     checkTcpBacklogSettings();
@@ -4233,6 +4248,13 @@ int main(int argc, char **argv) {
     aeSetAfterSleepProc(server.el,afterSleep);
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
+
+    //mybegin
+    close_my_log();
+
+    zsim_roi_end();
+    //myend
+
     return 0;
 }
 

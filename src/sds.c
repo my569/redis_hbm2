@@ -229,23 +229,32 @@ sds sdsMakeRoomFor(sds s, size_t addlen) {
     hdrlen = sdsHdrSize(type);
     if (oldtype==type) {
         // mybegin
-        if(in_hbmspace(s)){
+        if (in_hbmspace(s)){
             newsh = hbm_realloc(sh, hdrlen+newlen+1);
+#if MY_DEBUG
+            printf("hbm malloc failed, will use dram malloc\n");
+#endif
+            if (newsh == NULL) newsh = s_realloc(sh, hdrlen+newlen+1); // if hbm malloc failed, will use dram malloc
         }else{
             newsh = s_realloc(sh, hdrlen+newlen+1);
         }
         // myend
-        
         if (newsh == NULL) return NULL;
         s = (char*)newsh+hdrlen;
     } else {
         /* Since the header size changes, need to move the string forward,
          * and can't use realloc */
-        if(in_hbmspace(s)){
+        //mybegin
+        if (in_hbmspace(s)){
             newsh = hbm_malloc(hdrlen+newlen+1);
+#if MY_DEBUG
+            printf("hbm malloc failed, will use dram malloc\n");
+#endif
+            if (newsh == NULL) newsh = s_malloc(hdrlen+newlen+1);
         }else{
             newsh = s_malloc(hdrlen+newlen+1);
         }
+        // myend
         if (newsh == NULL) return NULL;
         memcpy((char*)newsh+hdrlen, s, len+1);
         s_free(sh);
