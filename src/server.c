@@ -56,6 +56,10 @@
 #include <locale.h>
 #include <sys/socket.h>
 
+//mybegin
+#include "zsim-ramulator/misc/hooks/zsim_hooks.h"
+//end
+
 /* Our shared "common" objects */
 
 struct sharedObjectsStruct shared;
@@ -4042,6 +4046,8 @@ int main(int argc, char **argv) {
     int j;
 
     //mybegin
+    zsim_roi_begin();
+
     init_my_log();
     my_hbm_init(8*1024*1024);//8M 用于测试
     trace_init();
@@ -4245,6 +4251,8 @@ int main(int argc, char **argv) {
 
     //mybegin
     close_my_log();
+
+    zsim_roi_end();
     //myend
 
     return 0;

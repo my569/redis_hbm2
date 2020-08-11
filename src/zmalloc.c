@@ -681,7 +681,7 @@ void log_my_trace(void* ptr, TraceType type)
     fprintf(stdout, "%p %s %d\n", getRealAddr(ptr), type==TRACE_READ? "R":"w", in_hbmspace(ptr));
     fprintf(fp, "%p %s %d\n", getRealAddr(ptr), type==TRACE_READ? "R":"w", in_hbmspace(ptr));
 #else
-    fprintf(stdout, "%p %s %d\n", ptr, type==TRACE_READ? "R":"w", in_hbmspace(ptr));
+    fprintf(stdout, "trace: %p %s %d\n", ptr, type==TRACE_READ? "R":"w", in_hbmspace(ptr));
     fprintf(fp, "%p %s %d\n", ptr, type==TRACE_READ? "R":"w", in_hbmspace(ptr));
 #endif
 }

@@ -122,7 +122,7 @@ int zmalloc_test(int argc, char **argv);
 #ifndef __HBM_H
 #define __HBM_H
 
-#define MY_DEBUG 1
+#define MY_DEBUG 0
 
 #define HBM_HOT_SIZE 100
 extern size_t hbm_used_memory;
@@ -158,6 +158,9 @@ static inline int isMigrateData(){
     return temp == 1;
 }
 
+void my_hbm_init(size_t space_size);
+
+
 void *hbm_malloc(size_t size);
 void hbm_free(void *ptr);
 void *hbm_realloc(void* ptr, size_t size);
@@ -174,7 +177,7 @@ void* getRealAddr(void* virt_addr);
 #define __LOG_H
 
 #define TRACE_START 1
-#define TRACE_REAL 1
+#define TRACE_REAL 0
 
 typedef enum{
     TRACE_READ = 0,
@@ -185,6 +188,8 @@ typedef enum{
 int init_my_log();
 int my_log(const char* fmt, ...);
 int close_my_log();
+
+void trace_init();
 void log_my_trace(void* ptr, TraceType type);
 
 #endif //__LOG_H
