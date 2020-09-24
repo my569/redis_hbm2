@@ -511,8 +511,28 @@ pthread_mutex_t migrate_data_group_var_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // dlmalloc
 static mspace ms = NULL;
+
+char* get_hbm_space_info(char* buf){//buf 可以设置50
+    if(!ms) return "";
+    void *start_ptr, *end_ptr;
+    size_t size;
+    
+    get_mspace_info(ms, &start_ptr, &end_ptr, &size);
+    if(buf == NULL){
+        fprintf(stdout, "hbmspcae: %p-%p size=%zd=%zdMB\n", start_ptr, end_ptr, size, size/1024/1024);
+        return NULL;
+    }
+#if TRACE_REAL
+    sprintf(buf, "hbmspcae: %p-%p size=%zd\n", getRealAddr(start_ptr), getRealAddr(end_ptr), size);
+#else
+    sprintf(buf, "hbmspcae: %p-%p\n size=%zd\n", start_ptr, end_ptr, size);
+#endif
+    return buf;
+}
+
 void my_hbm_init(size_t space_size){
     ms = create_mspace(space_size,0);
+    get_hbm_space_info((char*)NULL);
     //ms = create_mspace(64*1024*1024,0);//64M
     //printf("mlmalloc initlized success\n");
 }
@@ -606,20 +626,6 @@ void* getRealAddr(void* virt_ptr){
 
     return phy_ptr;
 }
-
-char* get_hbm_space_info(char* buf){//buf 可以设置50
-    if(!ms) return "";
-    void *start_ptr, *end_ptr;
-    
-    get_mspace_info(ms, &start_ptr, &end_ptr);
-#if TRACE_REAL
-    sprintf(buf, "hbmspcae: %p-%p\n", getRealAddr(start_ptr), getRealAddr(end_ptr));
-#else
-    sprintf(buf, "hbmspcae: %p-%p\n", start_ptr, end_ptr);
-#endif
-    return buf;
-}
-
 
 
 // mylog

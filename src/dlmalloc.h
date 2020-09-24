@@ -559,8 +559,7 @@ int mspace_mallopt(int, int);
 
 // mybegin
 int mspace_is_in(mspace msp, void* ptr);
-
-void get_mspace_info(mspace m, void **start_ptr, void **end_ptr);
+void get_mspace_info(mspace m, void **start_ptr, void **end_ptr, size_t* size);
 // myend
 
 

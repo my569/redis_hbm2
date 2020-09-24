@@ -485,7 +485,7 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 //#include "dlmalloc.h"
 #define ONLY_MSPACES 1
 #define MSPACES 1
-#define DEBUG 1
+//#define DEBUG 1
 //#include <sys/mman.h>
 //#include <sys/stat.h>
 //#include <unistd.h>
@@ -5391,7 +5391,7 @@ void mspace_malloc_stats(mspace msp) {
 }
 
 // mybegin
-void get_mspace_info(mspace msp, void **start_ptr, void **end_ptr){
+void get_mspace_info(mspace msp, void **start_ptr, void **end_ptr, size_t* size){
   mstate m = (mstate)msp;
 
   ensure_initialization();
@@ -5402,6 +5402,7 @@ void get_mspace_info(mspace msp, void **start_ptr, void **end_ptr){
       while (s != 0) {
         *start_ptr = (void*)s->base;
         *end_ptr = (void*)(s->base + s->size);
+        *size = s->size;
         s = s->next;
       }
     }
